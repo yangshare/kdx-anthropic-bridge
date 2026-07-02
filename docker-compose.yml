@@ -1,0 +1,7 @@
+services:
+  kdx-anthropic-bridge:
+    build: .
+    env_file: .env
+    ports:
+      - "${PROXY_PORT:-8080}:${PROXY_PORT:-8080}"
+    restart: unless-stopped

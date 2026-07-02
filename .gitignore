@@ -1,0 +1,24 @@
+# 二进制
+/bridge
+/bin/
+
+# 环境
+.env
+
+# Go
+vendor/
+
+# 抓包数据(排查产物,不入库)
+captures/
+
+# Python 缓存(scripts/ 下的抓包脚本)
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
