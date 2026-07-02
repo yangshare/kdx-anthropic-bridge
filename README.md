@@ -124,8 +124,8 @@ gofmt -l .           # 格式检查
 
 ## 已知限制
 
-- **WebFetch 工具不可用**:Claude Code 的 WebFetch 调 `api.anthropic.com` 做域名安全检查,不走本代理。网络访问不了 api.anthropic.com 时报错。替代:用 MCP 的 `read_url` 工具。
-- **WebSearch 依赖代理**:`GOOGLE_SEARCH_PROXY` 配的代理挂了,WebSearch 失效(thinking 不受影响)。
+- **WebSearch 依赖代理**:`GOOGLE_SEARCH_PROXY` 配的代理不通时,WebSearch 失效(thinking 不受影响)。
+- **谷歌 DOM 变化**:解析依赖 Google 页面结构,改版可能失效。
 
 ## License
 
