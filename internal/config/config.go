@@ -28,6 +28,10 @@ type Config struct {
 	UpstreamMaxRetries int
 	// UpstreamRetryInterval 重试间隔。0 表示不等待(但仍会重发请求)。
 	UpstreamRetryInterval time.Duration
+	// UpstreamHeaderTimeout 等待上游返回响应头的最长时间。
+	// 上游挂起(不回响应头)时到点判失败,触发重试。
+	// 一旦开始流式返回响应头,后续流式传输不受此限制(长文档/长思考可慢慢传)。
+	UpstreamHeaderTimeout time.Duration
 
 	// GoogleSearchProxy 谷歌搜索代理(http://host:port),谷歌直连会超时
 	GoogleSearchProxy string
@@ -44,8 +48,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: invalid PROXY_PORT: %w", err)
 	}
 
-	retries := getenvInt("UPSTREAM_MAX_RETRIES", 20)
+	retries := getenvInt("UPSTREAM_MAX_RETRIES", 10)
 	intervalSec := getenvInt("UPSTREAM_RETRY_INTERVAL_SEC", 5)
+	headerTimeoutSec := getenvInt("UPSTREAM_HEADER_TIMEOUT_SEC", 30)
 
 	cfg := &Config{
 		ProxyHost:       getenv("PROXY_HOST", "0.0.0.0"),
@@ -56,6 +61,7 @@ func Load() (*Config, error) {
 
 		UpstreamMaxRetries:    retries,
 		UpstreamRetryInterval: time.Duration(intervalSec) * time.Second,
+		UpstreamHeaderTimeout: time.Duration(headerTimeoutSec) * time.Second,
 
 		GoogleSearchProxy:   os.Getenv("GOOGLE_SEARCH_PROXY"),
 		GoogleSearchTimeout: getenvInt("GOOGLE_SEARCH_TIMEOUT", 15),

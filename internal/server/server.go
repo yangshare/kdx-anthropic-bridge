@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/godkey/kdx-anthropic-bridge/internal/anthropic"
 	"github.com/godkey/kdx-anthropic-bridge/internal/config"
@@ -29,13 +28,19 @@ type Server struct {
 
 // New 构造 Server。
 func New(cfg *config.Config) *Server {
+	// 用 ResponseHeaderTimeout 而非 http.Client.Timeout:
+	// 只限"等上游响应头"的时间,一旦开始流式返回,传输不限总时长
+	// (长文档/长思考可慢慢流,不会被掐断)。
+	transport := &http.Transport{
+		ResponseHeaderTimeout: cfg.UpstreamHeaderTimeout,
+	}
 	s := &Server{
 		cfg:      cfg,
 		rewriter: proxy.RewriteRequest,
 		upstream: &upstream.Client{
 			BaseURL:       cfg.UpstreamBaseURL,
 			APIKey:        cfg.UpstreamAPIKey,
-			HTTP:          &http.Client{Timeout: 60 * time.Second},
+			HTTP:          &http.Client{Transport: transport},
 			MaxRetries:    cfg.UpstreamMaxRetries,
 			RetryInterval: cfg.UpstreamRetryInterval,
 		},

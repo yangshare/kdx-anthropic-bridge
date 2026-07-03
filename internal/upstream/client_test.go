@@ -185,6 +185,49 @@ func TestForward_maxRetriesZero(t *testing.T) {
 	}
 }
 
+// TestForward_headerTimeoutRetries 上游挂起(不回响应头)时,
+// ResponseHeaderTimeout 触发,验证会重试并在恢复后成功。
+// 模拟"上游间歇性挂起":第一次请求故意 block,第二次正常返回。
+func TestForward_headerTimeoutRetries(t *testing.T) {
+	var calls int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			// 故意不写 Header 也不返回,触发 ResponseHeaderTimeout
+			time.Sleep(3 * time.Second)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "ok")
+	}))
+	t.Cleanup(up.Close)
+
+	// 用带 ResponseHeaderTimeout 的 transport,1 秒等响应头
+	transport := &http.Transport{
+		ResponseHeaderTimeout: 1 * time.Second,
+	}
+	c := &Client{
+		BaseURL:       up.URL,
+		APIKey:        "fake-key",
+		HTTP:          &http.Client{Transport: transport},
+		MaxRetries:    2,
+		RetryInterval: 100 * time.Millisecond,
+	}
+
+	resp, err := c.Forward(http.MethodPost, "/v1/messages", []byte(`{}`), nil)
+	if err != nil {
+		t.Fatalf("Forward err: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 (after retry)", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Errorf("calls = %d, want 2 (1 hang + 1 success)", calls)
+	}
+}
+
 // TestForward_injectsAuthKey 验证转发时注入上游鉴权头,替换为上游 key。
 func TestForward_injectsAuthKey(t *testing.T) {
 	var gotAuth, gotXKey string
