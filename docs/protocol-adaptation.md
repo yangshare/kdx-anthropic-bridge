@@ -135,6 +135,42 @@ function makeToolSchema(input: Input): BetaWebSearchTool20250305 {
 | system prompt | text block + ephemeral cache_control |
 | usage | 上游返回(可能为 0,不影响功能) |
 
+## 5. 上游重试(502/503/429)
+
+### 现象
+
+上游(科大→智谱 GLM)偶发返回 503 "The system is busy, please try again later"。
+Claude Code 客户端对这类错误用硬编码指数退避重试,间隔长、次数少,单次请求平白浪费约一分钟。
+且客户端的重试节奏不可配置(实测 native 二进制只有 `API_TIMEOUT_MS` / `MAX_RETRIES` 两个旋钮,
+无退避间隔配置项)。
+
+### 修法
+
+把重试下沉到 bridge:bridge 收到 Claude Code 请求后,若上游返回 502/503/429,
+按**固定间隔**重试,直到成功或达上限,再把最终响应透传给 Claude Code。
+这样 Claude Code 感知到的是"稍等即成功"或"重试耗尽后的错误",不再干等客户端长退避。
+
+实现见 `internal/upstream/client.go` 的 `Forward`:
+
+- 重试状态码:502、503、429(网关类瞬时错误)
+- 非重试状态码(401/400/500 等):立即返回,不重试
+- 网络错误(上游不可达):同样重试,视为瞬时故障
+- 请求体以 `[]byte` 传入,每次重试用 `bytes.NewReader` 重新构造,保证可重放
+- 重试耗尽:返回最后一次响应(让下游看到真实错误状态码),不隐瞒
+
+### 配置
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `UPSTREAM_MAX_RETRIES` | 20 | 最大重试次数(不含首次)。0 = 不重试 |
+| `UPSTREAM_RETRY_INTERVAL_SEC` | 5 | 重试间隔(秒) |
+
+### 注意
+
+bridge 重试期间 Claude Code 客户端在等同一个 HTTP 响应,需把客户端 `API_TIMEOUT_MS`
+调大到能覆盖最坏情况(20 × 5s = 100s),建议设 120000。否则客户端会先超时断开,
+bridge 仍在重试,浪费上游配额。
+
 ## 已知限制
 
 - **谷歌搜索依赖代理**:`GOOGLE_SEARCH_PROXY` 配的代理不通时,WebSearch 失效(thinking 不受影响)。

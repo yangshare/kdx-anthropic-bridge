@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Config 代理运行配置。
@@ -22,6 +23,12 @@ type Config struct {
 	// UpstreamAPIKey 科大上游 key(appid:secret 格式)
 	UpstreamAPIKey string
 
+	// UpstreamMaxRetries 上游返回 502/503/429 时的最大重试次数(不含首次请求)。
+	// 0 表示不重试。
+	UpstreamMaxRetries int
+	// UpstreamRetryInterval 重试间隔。0 表示不等待(但仍会重发请求)。
+	UpstreamRetryInterval time.Duration
+
 	// GoogleSearchProxy 谷歌搜索代理(http://host:port),谷歌直连会超时
 	GoogleSearchProxy string
 	// GoogleSearchTimeout 谷歌搜索超时秒
@@ -32,22 +39,28 @@ type Config struct {
 
 // Load 从环境变量加载配置。缺失必要项返回 error。
 func Load() (*Config, error) {
+	port, err := strconv.Atoi(getenv("PROXY_PORT", "8080"))
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid PROXY_PORT: %w", err)
+	}
+
+	retries := getenvInt("UPSTREAM_MAX_RETRIES", 20)
+	intervalSec := getenvInt("UPSTREAM_RETRY_INTERVAL_SEC", 5)
+
 	cfg := &Config{
 		ProxyHost:       getenv("PROXY_HOST", "0.0.0.0"),
+		ProxyPort:       port,
 		ProxyKey:        os.Getenv("KDX_PROXY_KEY"),
 		UpstreamBaseURL: getenv("UPSTREAM_BASE_URL", "https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic"),
 		UpstreamAPIKey:  os.Getenv("UPSTREAM_API_KEY"),
+
+		UpstreamMaxRetries:    retries,
+		UpstreamRetryInterval: time.Duration(intervalSec) * time.Second,
 
 		GoogleSearchProxy:   os.Getenv("GOOGLE_SEARCH_PROXY"),
 		GoogleSearchTimeout: getenvInt("GOOGLE_SEARCH_TIMEOUT", 15),
 		GoogleSearchLimit:   getenvInt("GOOGLE_SEARCH_LIMIT", 5),
 	}
-
-	port, err := strconv.Atoi(getenv("PROXY_PORT", "8080"))
-	if err != nil {
-		return nil, fmt.Errorf("config: invalid PROXY_PORT: %w", err)
-	}
-	cfg.ProxyPort = port
 
 	if cfg.ProxyKey == "" {
 		return nil, fmt.Errorf("config: KDX_PROXY_KEY is required")

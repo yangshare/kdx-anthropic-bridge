@@ -6,10 +6,10 @@
 package server
 
 import (
-	"bytes"
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/godkey/kdx-anthropic-bridge/internal/anthropic"
 	"github.com/godkey/kdx-anthropic-bridge/internal/config"
@@ -33,9 +33,11 @@ func New(cfg *config.Config) *Server {
 		cfg:      cfg,
 		rewriter: proxy.RewriteRequest,
 		upstream: &upstream.Client{
-			BaseURL: cfg.UpstreamBaseURL,
-			APIKey:  cfg.UpstreamAPIKey,
-			HTTP:    &http.Client{},
+			BaseURL:       cfg.UpstreamBaseURL,
+			APIKey:        cfg.UpstreamAPIKey,
+			HTTP:          &http.Client{Timeout: 60 * time.Second},
+			MaxRetries:    cfg.UpstreamMaxRetries,
+			RetryInterval: cfg.UpstreamRetryInterval,
 		},
 	}
 	// 配了谷歌搜索代理才启用 web_search 响应过滤
@@ -60,27 +62,25 @@ func (s *Server) handleAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body := r.Body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read request body failed")
+		return
+	}
 	hasWebSearch := false
 
-	// 仅 /v1/messages 改写请求体
+	// 仅 /v1/messages 改写请求体,其他路径原样透传
 	if r.URL.Path == anthropic.PathMessages && r.Method == http.MethodPost {
-		raw, err := io.ReadAll(r.Body)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "read request body failed")
-			return
-		}
-		result, err := s.rewriter(raw)
+		result, err := s.rewriter(body)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "rewrite request body failed")
 			return
 		}
-		raw = result.Body
+		body = result.Body
 		hasWebSearch = result.HasWebSearch
-		body = io.NopCloser(bytes.NewReader(raw))
 	}
 
-	// 透传路径(含 query)
+	// 透传路径(含 query)。body 以 []byte 传入,支持上游重试时重放
 	resp, err := s.upstream.Forward(r.Method, r.URL.RequestURI(), body, r.Header)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "upstream forward failed")
