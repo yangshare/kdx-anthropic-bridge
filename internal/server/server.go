@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/godkey/kdx-anthropic-bridge/internal/anthropic"
 	"github.com/godkey/kdx-anthropic-bridge/internal/config"
@@ -43,6 +44,7 @@ func New(cfg *config.Config) *Server {
 			HTTP:          &http.Client{Transport: transport},
 			MaxRetries:    cfg.UpstreamMaxRetries,
 			RetryInterval: cfg.UpstreamRetryInterval,
+			Parallel:      cfg.UpstreamParallel,
 		},
 	}
 	// 配了谷歌搜索代理才启用 web_search 响应过滤
@@ -86,13 +88,15 @@ func (s *Server) handleAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 透传路径(含 query)。body 以 []byte 传入,支持上游重试时重放
+	tStart := time.Now()
 	resp, err := s.upstream.Forward(r.Method, r.URL.RequestURI(), body, r.Header)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "upstream forward failed")
-		log.Printf("upstream error: %v", err)
+		log.Printf("upstream error after %s: %v", time.Since(tStart), err)
 		return
 	}
 	defer resp.Body.Close()
+	headerWait := time.Since(tStart)
 
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
@@ -107,7 +111,10 @@ func (s *Server) handleAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 其他:流式透传
-	io.Copy(w, resp.Body)
+	n, _ := io.Copy(w, resp.Body)
+	log.Printf("done path=%s status=%d header_wait=%s stream=%s total=%s bytes=%d",
+		r.URL.Path, resp.StatusCode, headerWait, time.Since(tStart)-headerWait,
+		time.Since(tStart), n)
 }
 
 // authorized 校验 Claude Code 侧的鉴权头是否等于 KDX_PROXY_KEY。
