@@ -43,6 +43,12 @@ UPSTREAM_BASE_URL=https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic
 PROXY_HOST=0.0.0.0
 PROXY_PORT=8080
 
+# 上游重试与并发(可选,以下为默认值)
+UPSTREAM_MAX_RETRIES=10        # 502/503/429 最大重试次数(不含首次),0=不重试
+UPSTREAM_RETRY_INTERVAL_SEC=5  # 重试间隔秒,0=不等待
+UPSTREAM_HEADER_TIMEOUT_SEC=30 # 等上游响应头超时,只限首字不限流式传输
+UPSTREAM_PARALLEL=1            # 单次请求并发路数,抢占游零星放行窗口,见下文
+
 # 谷歌搜索代理(WebSearch 功能必填,谷歌直连会超时)
 GOOGLE_SEARCH_PROXY=http://127.0.0.1:7890
 GOOGLE_SEARCH_TIMEOUT=15
@@ -121,6 +127,18 @@ gofmt -l .           # 格式检查
 ```
 
 见 [开发指南](docs/development.md)。
+
+## 上游重试与并发调优
+
+科大上游间歇性返回 502/503/429 或排队等首字节,代理通过重试 + 并发抢窗口缓解。
+
+- **`UPSTREAM_MAX_RETRIES` / `UPSTREAM_RETRY_INTERVAL_SEC`**:上游返回 502/503/429 时按固定间隔重试,默认重试 10 次、间隔 5 秒。间隔越小重试越快,但上游持续过载时频繁重发可能加重负担。
+- **`UPSTREAM_HEADER_TIMEOUT_SEC`**:只限"等上游响应头"的时间(默认 30s),一旦开始流式返回就不再计时,不会掐断长文档/长思维链。
+- **`UPSTREAM_PARALLEL`**:单次请求并发发 N 路抢占游零星放行窗口,谁先拿到 200 就用谁,其余取消。默认 1(串行)。
+
+并发提速原理:首字时间从"单路排队"变成"N 路中最快那路排队"。代价是每次请求对上游压力翻 N 倍,共享同一 key 的限流配额——上游持续过载时并发反而可能更快触发限流。**反噬严重时把 `UPSTREAM_PARALLEL` 调回 1 即退回串行,无需改代码。**
+
+> 提示:并发重试应保证总耗时在客户端超时内(`ANTHROPIC_API_TIMEOUT_MS`,Claude Code 默认 120s)。最坏耗时 ≈ MaxRetries × (响应头等待 + 间隔)。
 
 ## 已知限制
 
