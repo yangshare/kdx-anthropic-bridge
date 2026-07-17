@@ -18,6 +18,8 @@ __pycache__/
 # IDE
 .idea/
 .vscode/
+.claude/
+.codegraph/
 
 # OS
 .DS_Store
