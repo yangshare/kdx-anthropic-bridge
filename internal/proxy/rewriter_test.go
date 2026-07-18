@@ -18,7 +18,7 @@ func parseHelper(t *testing.T, b []byte) map[string]any {
 func TestRewriteRequest_adaptiveToEnabled(t *testing.T) {
 	// 核心用例:adaptive + display + budget_tokens -> 只剩 enabled
 	in := []byte(`{"model":"xopglm52","max_tokens":1024,"thinking":{"type":"adaptive","display":"omitted","budget_tokens":8000},"messages":[]}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("RewriteRequest error: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestRewriteRequest_adaptiveToEnabled(t *testing.T) {
 
 func TestRewriteRequest_alreadyEnabled_unchanged(t *testing.T) {
 	in := []byte(`{"thinking":{"type":"enabled","budget_tokens":2000}}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestRewriteRequest_alreadyEnabled_unchanged(t *testing.T) {
 
 func TestRewriteRequest_noThinking_unchanged(t *testing.T) {
 	in := []byte(`{"model":"xopglm52","messages":[{"role":"user","content":"hi"}]}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestRewriteRequest_noThinking_unchanged(t *testing.T) {
 
 func TestRewriteRequest_nonAdaptiveType_unchanged(t *testing.T) {
 	in := []byte(`{"thinking":{"type":"disabled"}}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestRewriteRequest_nonAdaptiveType_unchanged(t *testing.T) {
 
 func TestRewriteRequest_thinkingNotMap_unchanged(t *testing.T) {
 	in := []byte(`{"thinking":"enabled"}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestRewriteRequest_thinkingNotMap_unchanged(t *testing.T) {
 }
 
 func TestRewriteRequest_emptyBody_unchanged(t *testing.T) {
-	r, err := RewriteRequest([]byte{})
+	r, err := RewriteRequest([]byte{}, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRewriteRequest_emptyBody_unchanged(t *testing.T) {
 
 func TestRewriteRequest_invalidJSON_error(t *testing.T) {
 	in := []byte(`{not valid json}`)
-	_, err := RewriteRequest(in)
+	_, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err == nil {
 		t.Fatal("invalid JSON should return error")
 	}
@@ -118,7 +118,7 @@ func TestRewriteRequest_preservesUnknownFields(t *testing.T) {
 		"tools":[{"name":"Bash","input_schema":{}}],
 		"system":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]
 	}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestRewriteRequest_preservesUnknownFields(t *testing.T) {
 func TestRewriteRequest_webSearchToolRewritten(t *testing.T) {
 	// web_search_20250305 -> 普通 function tool(带 query input_schema)
 	in := []byte(`{"model":"xopglm52","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":8}],"messages":[]}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestRewriteRequest_webSearchMixedWithOtherTools(t *testing.T) {
 		{"type":"web_search_20250305","name":"web_search","max_uses":8},
 		{"name":"Read","input_schema":{}}
 	]}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -212,11 +212,68 @@ func TestRewriteRequest_webSearchMixedWithOtherTools(t *testing.T) {
 
 func TestRewriteRequest_noWebSearch_hasWebSearchFalse(t *testing.T) {
 	in := []byte(`{"tools":[{"name":"Bash","input_schema":{}}]}`)
-	r, err := RewriteRequest(in)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: true})
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
 	if r.HasWebSearch {
 		t.Errorf("HasWebSearch should be false when no web_search tool")
+	}
+}
+
+// ===== RewriteOptions 开关测试 =====
+
+func TestRewriteRequest_optionsDisabled_passthrough(t *testing.T) {
+	// 两开关全关(如 official profile):body 原样返回,不序列化,HasWebSearch=false
+	in := []byte(`{"thinking":{"type":"adaptive"},"tools":[{"type":"web_search_20250305","name":"web_search"}]}`)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: false, WebSearch: false})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if string(r.Body) != string(in) {
+		t.Errorf("options disabled should return original body\ngot:  %s\nwant: %s", r.Body, in)
+	}
+	if r.HasWebSearch {
+		t.Errorf("HasWebSearch should be false when WebSearch option off")
+	}
+}
+
+func TestRewriteRequest_onlyThinking(t *testing.T) {
+	// 只开 thinking:adaptive 被改写,web_search 工具原样保留
+	in := []byte(`{"thinking":{"type":"adaptive"},"tools":[{"type":"web_search_20250305","name":"web_search"}]}`)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: true, WebSearch: false})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if r.HasWebSearch {
+		t.Errorf("HasWebSearch should be false when WebSearch option off")
+	}
+	m := parseHelper(t, r.Body)
+	if th, _ := m["thinking"].(map[string]any); th["type"] != "enabled" {
+		t.Errorf("thinking not rewritten: %v", m["thinking"])
+	}
+	tools, _ := m["tools"].([]any)
+	if tools[0].(map[string]any)["type"] != "web_search_20250305" {
+		t.Errorf("web_search tool should be preserved when WebSearch option off: %v", tools[0])
+	}
+}
+
+func TestRewriteRequest_onlyWebSearch(t *testing.T) {
+	// 只开 web_search:thinking 原样保留,web_search 被改写
+	in := []byte(`{"thinking":{"type":"adaptive"},"tools":[{"type":"web_search_20250305","name":"web_search"}]}`)
+	r, err := RewriteRequest(in, RewriteOptions{Thinking: false, WebSearch: true})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if !r.HasWebSearch {
+		t.Errorf("HasWebSearch should be true")
+	}
+	m := parseHelper(t, r.Body)
+	if th, _ := m["thinking"].(map[string]any); th["type"] != "adaptive" {
+		t.Errorf("thinking should be preserved when Thinking option off: %v", m["thinking"])
+	}
+	tools, _ := m["tools"].([]any)
+	if tools[0].(map[string]any)["type"] == "web_search_20250305" {
+		t.Errorf("web_search tool should be rewritten when WebSearch option on")
 	}
 }

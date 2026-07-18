@@ -29,7 +29,7 @@ type platformRuntime struct {
 type Server struct {
 	cfg        *config.Config
 	byProxyKey map[string]*platformRuntime
-	rewriter   func([]byte) (*proxy.RewriteResult, error)
+	rewriter func([]byte, proxy.RewriteOptions) (*proxy.RewriteResult, error)
 	// searcher 谷歌搜索执行器,响应侧拦截 web_search tool_use 时用。
 	// 为 nil 时不做响应过滤(web_search 走原样透传)。
 	searcher    *proxy.WebSearchExecutorAdapter
@@ -104,7 +104,10 @@ func (s *Server) handleAll(w http.ResponseWriter, r *http.Request) {
 
 	// 仅 /v1/messages 改写请求体,其他路径原样透传
 	if r.URL.Path == anthropic.PathMessages && r.Method == http.MethodPost {
-		result, err := s.rewriter(body) // 任务 3 改为按 profile 传 RewriteOptions
+		result, err := s.rewriter(body, proxy.RewriteOptions{
+			Thinking:  p.profile.RewriteThinking,
+			WebSearch: p.profile.RewriteWebSearch,
+		})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "rewrite request body failed")
 			return

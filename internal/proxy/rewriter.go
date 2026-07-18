@@ -21,14 +21,24 @@ type RewriteResult struct {
 	HasWebSearch bool
 }
 
-// RewriteRequest 改写 Anthropic /v1/messages 请求体。
+// RewriteOptions 控制 RewriteRequest 按平台 profile 改写哪些字段。
+type RewriteOptions struct {
+	Thinking  bool // profile.RewriteThinking
+	WebSearch bool // profile.RewriteWebSearch
+}
+
+// RewriteRequest 改写 Anthropic /v1/messages 请求体,按 opt 开关决定改写哪些字段。
 //
 // 改写规则(其他字段一律透传):
-//   - thinking.type == "adaptive"  ->  {"type":"enabled"}
-//   - tools 里的 web_search_20250305  ->  普通 function tool(带 query input_schema)
+//   - opt.Thinking && thinking.type == "adaptive"  ->  {"type":"enabled"}
+//   - opt.WebSearch && tools 里的 web_search_20250305  ->  普通 function tool(带 query input_schema)
 //
 // 没有需要改的字段时返回原始 body,避免重新序列化改变字节顺序。
-func RewriteRequest(body []byte) (*RewriteResult, error) {
+// 两开关全关(如 official profile)时等同透传。
+//
+// HasWebSearch 仅在 opt.WebSearch 开启且请求含 web_search 工具时为 true
+// (响应侧拦截据此 + profile.RewriteWebSearch 共同决定)。
+func RewriteRequest(body []byte, opt RewriteOptions) (*RewriteResult, error) {
 	if len(body) == 0 {
 		return &RewriteResult{Body: body}, nil
 	}
@@ -38,8 +48,17 @@ func RewriteRequest(body []byte) (*RewriteResult, error) {
 		return nil, fmt.Errorf("rewriter: parse request body: %w", err)
 	}
 
-	changed := rewriteThinking(req)
-	hasWS := rewriteWebSearchTools(req)
+	changed := false
+	if opt.Thinking {
+		if rewriteThinking(req) {
+			changed = true
+		}
+	}
+	hasWS := false
+	if opt.WebSearch {
+		hasWS = rewriteWebSearchTools(req)
+	}
+
 	if !changed && !hasWS {
 		return &RewriteResult{Body: body, HasWebSearch: hasWS}, nil
 	}

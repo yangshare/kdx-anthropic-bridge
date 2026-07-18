@@ -201,3 +201,96 @@ func TestHandler_upstreamInjectsAuthKey(t *testing.T) {
 		t.Errorf("proxy key leaked to upstream: %s", gotAuth)
 	}
 }
+
+// TestHandler_multiPlatformRouting 两个平台(kdx 改写 / anthropic 透传)+ 未知 key 401。
+// 验证不同 proxy key 路由到不同上游,且改写按 profile 差异生效。
+func TestHandler_multiPlatformRouting(t *testing.T) {
+	var kdxBody, anthropicBody []byte
+	kdxUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		kdxBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+		io.WriteString(w, "event: message_stop\ndata: {}\n")
+	}))
+	t.Cleanup(kdxUp.Close)
+	anthropicUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		anthropicBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+		io.WriteString(w, "event: message_stop\ndata: {}\n")
+	}))
+	t.Cleanup(anthropicUp.Close)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{Host: "127.0.0.1", Port: 0},
+		Platforms: []config.Platform{
+			{Name: "kdx", ProxyKey: "token-kdx", BaseURL: kdxUp.URL, APIKey: "kdx-key", Profile: "keding"},
+			{Name: "anthropic", ProxyKey: "token-anthropic", BaseURL: anthropicUp.URL, APIKey: "ant-key", Profile: "official"},
+		},
+		Profiles: map[string]config.Profile{
+			"keding":   {RewriteThinking: true, RewriteWebSearch: true, HeaderTimeout: config.Duration(30 * time.Second)},
+			"official": {RewriteThinking: false, RewriteWebSearch: false, HeaderTimeout: config.Duration(60 * time.Second)},
+		},
+	}
+	s := New(cfg)
+	s.byProxyKey["token-kdx"].client.HTTP = kdxUp.Client()
+	s.byProxyKey["token-anthropic"].client.HTTP = anthropicUp.Client()
+
+	body := `{"thinking":{"type":"adaptive"},"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[]}`
+
+	// kdx 平台:thinking + web_search 都改写
+	doProxy(s, "POST", "/v1/messages", body, "token-kdx")
+	if !strings.Contains(string(kdxBody), `"type":"enabled"`) {
+		t.Errorf("kdx should rewrite thinking\ngot: %s", kdxBody)
+	}
+	if strings.Contains(string(kdxBody), "adaptive") {
+		t.Errorf("kdx should remove adaptive\ngot: %s", kdxBody)
+	}
+	if strings.Contains(string(kdxBody), "web_search_20250305") {
+		t.Errorf("kdx should rewrite web_search tool\ngot: %s", kdxBody)
+	}
+
+	// anthropic 平台:全透传
+	doProxy(s, "POST", "/v1/messages", body, "token-anthropic")
+	if !strings.Contains(string(anthropicBody), "adaptive") {
+		t.Errorf("anthropic should pass thinking through\ngot: %s", anthropicBody)
+	}
+	if !strings.Contains(string(anthropicBody), "web_search_20250305") {
+		t.Errorf("anthropic should keep web_search_20250305\ngot: %s", anthropicBody)
+	}
+
+	// 未知 key:401
+	rec := doProxy(s, "POST", "/v1/messages", body, "token-unknown")
+	if rec.Code != 401 {
+		t.Errorf("unknown key status = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandler_webSearchInterceptOnlyWhenProfileEnabled kdx 开了 web_search 改写,
+// 请求带 web_search 工具时响应走拦截路径(此处 searcher 为 nil,验证不 panic 即可)。
+func TestHandler_webSearchInterceptOnlyWhenProfileEnabled(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		io.WriteString(w, "event: message_stop\ndata: {}\n")
+	}))
+	t.Cleanup(up.Close)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{Host: "127.0.0.1", Port: 0},
+		Platforms: []config.Platform{
+			{Name: "official", ProxyKey: "tok", BaseURL: up.URL, APIKey: "k", Profile: "official"},
+		},
+		Profiles: map[string]config.Profile{
+			"official": {RewriteWebSearch: false, HeaderTimeout: config.Duration(30 * time.Second)},
+		},
+	}
+	s := New(cfg)
+	s.byProxyKey["tok"].client.HTTP = up.Client()
+
+	// official profile 关了 web_search 改写:即使请求带 web_search_20250305,
+	// 也不改写、不触发响应拦截(searcher 也为 nil),原样透传,不 panic。
+	body := `{"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[]}`
+	rec := doProxy(s, "POST", "/v1/messages", body, "tok")
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
