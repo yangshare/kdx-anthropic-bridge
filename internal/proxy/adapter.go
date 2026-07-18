@@ -15,10 +15,10 @@ type WebSearchExecutorAdapter struct {
 
 // NewSearchAdapter 从配置构造搜索执行器。
 func NewSearchAdapter(cfg *config.Config) *WebSearchExecutorAdapter {
-	timeout := time.Duration(cfg.GoogleSearchTimeout) * time.Second
+	timeout := time.Duration(cfg.GoogleSearch.Timeout) * time.Second
 	return &WebSearchExecutorAdapter{
 		google: &search.GoogleSearcher{
-			Proxy:   cfg.GoogleSearchProxy,
+			Proxy:   cfg.GoogleSearch.Proxy,
 			Timeout: timeout,
 		},
 	}

@@ -7,29 +7,45 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/godkey/kdx-anthropic-bridge/internal/config"
 )
 
-// newTestServer 起一个带假上游的测试 Server。
+// newTestServer 起一个带假上游的测试 Server(单平台,profile 全开)。
 // upstreamHandler 处理假上游请求,返回模拟响应。
-// 返回代理 Server 和假上游地址(已注入)。
 func newTestServer(t *testing.T, upstreamHandler http.HandlerFunc) *Server {
 	t.Helper()
 	up := httptest.NewServer(upstreamHandler)
 	t.Cleanup(up.Close)
 
 	cfg := &config.Config{
-		ProxyHost:       "127.0.0.1",
-		ProxyPort:       0, // 不实际监听,用 httptest
-		ProxyKey:        "test-proxy-key",
-		UpstreamBaseURL: up.URL,
-		UpstreamAPIKey:  "fake-upstream-key",
+		Server: config.ServerConfig{Host: "127.0.0.1", Port: 0}, // 不实际监听,用 httptest
+		GoogleSearch: config.GoogleSearchConfig{
+			Timeout: 15,
+			Limit:   5,
+		},
+		Platforms: []config.Platform{
+			{
+				Name:     "test",
+				ProxyKey: "test-proxy-key",
+				BaseURL:  up.URL,
+				APIKey:   "fake-upstream-key",
+				Profile:  "default",
+			},
+		},
+		Profiles: map[string]config.Profile{
+			"default": {
+				RewriteThinking:  true,
+				RewriteWebSearch: true,
+				HeaderTimeout:    config.Duration(30 * time.Second),
+				Parallel:         1,
+			},
+		},
 	}
 	s := New(cfg)
-	// 注入假上游 client(覆盖默认 http.Client,用 httptest 的)
-	s.upstream.HTTP = up.Client()
-	// httptest 上游是 HTTP,基址已含 http://127.0.0.1:port
+	// 注入假上游 client(覆盖默认 transport,用 httptest 的)
+	s.byProxyKey["test-proxy-key"].client.HTTP = up.Client()
 	return s
 }
 

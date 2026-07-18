@@ -1,102 +1,164 @@
-// Package config 加载代理运行配置(.env)。
+// Package config 加载代理运行配置(config.yaml)。
+//
+// 配置模型:多个上游平台(platforms),每个绑定一个 proxy_key 作为路由键;
+// 改写规则与重试/并发参数由 profile 模板封装,平台引用 profile。
+// 启动时完成全部校验与归一化,运行期不再处理配置错误。
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Config 代理运行配置。
 type Config struct {
-	// ProxyHost 代理监听地址
-	ProxyHost string
-	// ProxyPort 代理监听端口
-	ProxyPort int
-
-	// ProxyKey 代理自身鉴权 key,Claude Code 用它当 ANTHROPIC_AUTH_TOKEN
-	ProxyKey string
-
-	// UpstreamBaseURL 科大上游 Anthropic 端点基址
-	UpstreamBaseURL string
-	// UpstreamAPIKey 科大上游 key(appid:secret 格式)
-	UpstreamAPIKey string
-
-	// UpstreamMaxRetries 上游返回 502/503/429 时的最大重试次数(不含首次请求)。
-	// 0 表示不重试。
-	UpstreamMaxRetries int
-	// UpstreamRetryInterval 重试间隔。0 表示不等待(但仍会重发请求)。
-	UpstreamRetryInterval time.Duration
-	// UpstreamParallel 单次 attempt 内并发的请求数,抢占游零星放行窗口。
-	// <=1 退化为串行。越大越快抢占游窗口,但对上游压力翻 N 倍(共享 key 限流配额),
-	// 反噬严重时调回 1 即退回老逻辑。
-	UpstreamParallel int
-	// UpstreamHeaderTimeout 等待上游返回响应头的最长时间。
-	// 上游挂起(不回响应头)时到点判失败,触发重试。
-	// 一旦开始流式返回响应头,后续流式传输不受此限制(长文档/长思考可慢慢传)。
-	UpstreamHeaderTimeout time.Duration
-
-	// GoogleSearchProxy 谷歌搜索代理(http://host:port),谷歌直连会超时
-	GoogleSearchProxy string
-	// GoogleSearchTimeout 谷歌搜索超时秒
-	GoogleSearchTimeout int
-	// GoogleSearchLimit 默认返回结果数
-	GoogleSearchLimit int
+	Server       ServerConfig       `yaml:"server"`
+	GoogleSearch GoogleSearchConfig `yaml:"google_search"`
+	Platforms    []Platform         `yaml:"platforms"`
+	Profiles     map[string]Profile `yaml:"profiles"`
 }
 
-// Load 从环境变量加载配置。缺失必要项返回 error。
-func Load() (*Config, error) {
-	port, err := strconv.Atoi(getenv("PROXY_PORT", "8080"))
+// ServerConfig 网关自身监听配置。
+type ServerConfig struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+}
+
+// GoogleSearchConfig 谷歌搜索(WebSearch 响应侧拦截用)。
+type GoogleSearchConfig struct {
+	Proxy   string `yaml:"proxy"`
+	Timeout int    `yaml:"timeout"`
+	Limit   int    `yaml:"limit"`
+}
+
+// Platform 上游实例。每个实例绑定一个全局唯一的 proxy_key 作为路由键。
+type Platform struct {
+	Name     string `yaml:"name"`
+	ProxyKey string `yaml:"proxy_key"`
+	BaseURL  string `yaml:"base_url"`
+	APIKey   string `yaml:"api_key"`
+	Profile  string `yaml:"profile"` // 引用 Profiles 的 key
+}
+
+// Profile 改写模板:封装该平台的协议适配开关 + 重试/并发/超时参数。
+type Profile struct {
+	RewriteThinking  bool     `yaml:"rewrite_thinking"`
+	RewriteWebSearch bool     `yaml:"rewrite_web_search"`
+	MaxRetries       int      `yaml:"max_retries"`
+	RetryInterval    Duration `yaml:"retry_interval"`
+	HeaderTimeout    Duration `yaml:"header_timeout"`
+	Parallel         int      `yaml:"parallel"`
+}
+
+// Duration 包装 time.Duration,支持从 YAML 字符串解析("5s"/"30s"/"1m30s")。
+type Duration time.Duration
+
+// UnmarshalYAML 把 YAML 字符串解析为 time.Duration。
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+	if s == "" {
+		*d = 0
+		return nil
+	}
+	parsed, err := time.ParseDuration(s)
 	if err != nil {
-		return nil, fmt.Errorf("config: invalid PROXY_PORT: %w", err)
+		return fmt.Errorf("invalid duration %q: %w", s, err)
 	}
-
-	retries := getenvInt("UPSTREAM_MAX_RETRIES", 10)
-	intervalSec := getenvInt("UPSTREAM_RETRY_INTERVAL_SEC", 5)
-	headerTimeoutSec := getenvInt("UPSTREAM_HEADER_TIMEOUT_SEC", 30)
-	parallel := getenvInt("UPSTREAM_PARALLEL", 1)
-
-	cfg := &Config{
-		ProxyHost:       getenv("PROXY_HOST", "0.0.0.0"),
-		ProxyPort:       port,
-		ProxyKey:        os.Getenv("KDX_PROXY_KEY"),
-		UpstreamBaseURL: getenv("UPSTREAM_BASE_URL", "https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic"),
-		UpstreamAPIKey:  os.Getenv("UPSTREAM_API_KEY"),
-
-		UpstreamMaxRetries:    retries,
-		UpstreamRetryInterval: time.Duration(intervalSec) * time.Second,
-		UpstreamParallel:      parallel,
-		UpstreamHeaderTimeout: time.Duration(headerTimeoutSec) * time.Second,
-
-		GoogleSearchProxy:   os.Getenv("GOOGLE_SEARCH_PROXY"),
-		GoogleSearchTimeout: getenvInt("GOOGLE_SEARCH_TIMEOUT", 15),
-		GoogleSearchLimit:   getenvInt("GOOGLE_SEARCH_LIMIT", 5),
-	}
-
-	if cfg.ProxyKey == "" {
-		return nil, fmt.Errorf("config: KDX_PROXY_KEY is required")
-	}
-	if cfg.UpstreamAPIKey == "" {
-		return nil, fmt.Errorf("config: UPSTREAM_API_KEY is required")
-	}
-	return cfg, nil
+	*d = Duration(parsed)
+	return nil
 }
 
-// getenv 读环境变量,缺失返回 def。
-func getenv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// Load 从 path 读取并解析 config.yaml,执行校验与归一化。
+// 任何配置错误都返回 error,由调用方 log.Fatal。
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config: read %s: %w", path, err)
 	}
-	return def
+
+	var cfg Config
+	// 严格模式:未知字段(拼写错误)报错,避免配置不生效而不察觉
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	cfg.normalize()
+	return &cfg, nil
 }
 
-// getenvInt 读环境变量为 int,缺失或非法返回 def。
-func getenvInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
+// validate 启动时校验,失败返回携带具体冲突项的 error。
+func (c *Config) validate() error {
+	if c.Server.Port < 1 || c.Server.Port > 65535 {
+		return fmt.Errorf("config: server.port %d out of range [1,65535]", c.Server.Port)
+	}
+	if len(c.Platforms) == 0 {
+		return fmt.Errorf("config: platforms is empty (at least one upstream required)")
+	}
+
+	// proxy_key 全局唯一 + 必填 + base_url/api_key/profile 必填
+	seen := make(map[string]bool, len(c.Platforms))
+	for i, p := range c.Platforms {
+		if p.ProxyKey == "" {
+			return fmt.Errorf("config: platforms[%d].proxy_key is empty", i)
+		}
+		if seen[p.ProxyKey] {
+			return fmt.Errorf("config: duplicate proxy_key %q", p.ProxyKey)
+		}
+		seen[p.ProxyKey] = true
+		if p.BaseURL == "" {
+			return fmt.Errorf("config: platforms[%d] (%s).base_url is empty", i, p.Name)
+		}
+		if p.APIKey == "" {
+			return fmt.Errorf("config: platforms[%d] (%s).api_key is empty", i, p.Name)
+		}
+		if p.Profile == "" {
+			return fmt.Errorf("config: platforms[%d] (%s).profile is empty", i, p.Name)
+		}
+		if _, ok := c.Profiles[p.Profile]; !ok {
+			return fmt.Errorf("config: platforms[%d] (%s) references unknown profile %q",
+				i, p.Name, p.Profile)
 		}
 	}
-	return def
+	return nil
+}
+
+// normalize 归一化缺省字段为安全默认值。
+func (c *Config) normalize() {
+	if c.GoogleSearch.Timeout <= 0 {
+		c.GoogleSearch.Timeout = 15
+	}
+	if c.GoogleSearch.Limit <= 0 {
+		c.GoogleSearch.Limit = 5
+	}
+	for name, p := range c.Profiles {
+		if p.Parallel <= 0 {
+			p.Parallel = 1
+		}
+		if p.HeaderTimeout <= 0 {
+			p.HeaderTimeout = Duration(30 * time.Second)
+		}
+		c.Profiles[name] = p
+	}
+}
+
+// Index 构造 proxy_key -> *Platform 反查表,供鉴权层 O(1) 查找。
+func (c *Config) Index() map[string]*Platform {
+	idx := make(map[string]*Platform, len(c.Platforms))
+	for i := range c.Platforms {
+		p := &c.Platforms[i]
+		idx[p.ProxyKey] = p
+	}
+	return idx
 }
