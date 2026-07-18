@@ -1,0 +1,46 @@
+# kdx-anthropic-bridge 配置示例
+# 用法:cp config.example.yaml config.yaml,填入真实 key 后启动。
+# 真实 config.yaml 不入库(已在 .gitignore),本文件随仓库提交作为模板。
+
+# 网关自身
+server:
+  host: 0.0.0.0
+  # 注意:Docker 部署时,docker-compose.yml 的端口映射需与此处 port 一致
+  port: 8080
+
+# 谷歌搜索(WebSearch 功能;proxy 留空则禁用响应侧 web_search 拦截)
+google_search:
+  proxy: http://127.0.0.1:7890   # 谷歌直连会超时,必填一个能访问谷歌的代理
+  timeout: 15                    # 秒
+  limit: 5                       # 每次搜索返回结果数
+
+# 上游实例列表:每个实例绑定一个 proxy_key(客户端用它当 ANTHROPIC_AUTH_TOKEN 触发该上游)
+platforms:
+  - name: kdx
+    proxy_key: token-kdx-xxxxxx          # 自己设随机串,Claude Code 用它鉴权
+    base_url: https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic
+    api_key: appid:secret                # 科大上游真实 key
+    profile: keding                      # 引用 profiles.keding
+
+  - name: anthropic
+    proxy_key: token-anthropic-yyyyyy
+    base_url: https://api.anthropic.com
+    api_key: sk-ant-...                  # 官方上游真实 key
+    profile: official
+
+# 改写模板:封装该平台的全部适配规则 + 重试/并发参数
+profiles:
+  keding:
+    rewrite_thinking: true       # thinking.type=adaptive -> enabled(科大需要)
+    rewrite_web_search: true     # web_search_20250305 -> function tool(科大需要)
+    max_retries: 10              # 502/503/429 重试次数(不含首次)
+    retry_interval: 5s           # 重试间隔,>0 才 sleep
+    header_timeout: 30s          # 等上游响应头超时;流式开始后不再计时
+    parallel: 1                  # 单次 attempt 并发抢窗口路数,<=1 串行
+
+  official:
+    rewrite_thinking: false      # 官方原生支持,不改写
+    rewrite_web_search: false
+    max_retries: 0               # 不重试
+    header_timeout: 60s
+    parallel: 1

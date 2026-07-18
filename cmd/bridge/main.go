@@ -1,10 +1,12 @@
 // Package main 是 kdx-anthropic-bridge 代理入口。
 //
-// 启动后监听 PROXY_HOST:PROXY_PORT,接收 Claude Code 的 Anthropic 协议请求,
-// 改写 thinking 字段后转发到科大上游,响应流式透传。
+// 启动后读取 config.yaml(--config 指定,默认工作目录下 config.yaml),
+// 监听 server.host:server.port,接收 Claude Code 的 Anthropic 协议请求,
+// 按 proxy key 路由到对应上游平台,响应流式透传。
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,20 +16,19 @@ import (
 
 	"github.com/godkey/kdx-anthropic-bridge/internal/config"
 	"github.com/godkey/kdx-anthropic-bridge/internal/server"
-	"github.com/joho/godotenv"
 )
 
 func main() {
-	// 启动时尝试加载同目录或可执行文件旁的 .env(找不到不报错,Docker/手动设环境变量时不用 .env)
-	_ = godotenv.Load()
+	configPath := flag.String("config", "config.yaml", "配置文件路径")
+	flag.Parse()
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("config load failed: %v", err)
 	}
 
 	srv := server.New(cfg)
-	addr := fmt.Sprintf("%s:%d", cfg.ProxyHost, cfg.ProxyPort)
+	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	httpSrv := &http.Server{
 		Addr:    addr,
 		Handler: srv.Routes(),
@@ -43,7 +44,10 @@ func main() {
 	}()
 
 	log.Printf("kdx-anthropic-bridge listening on %s", addr)
-	log.Printf("upstream: %s", cfg.UpstreamBaseURL)
+	for i := range cfg.Platforms {
+		p := &cfg.Platforms[i]
+		log.Printf("platform %s -> %s (profile=%s)", p.Name, p.BaseURL, p.Profile)
+	}
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
