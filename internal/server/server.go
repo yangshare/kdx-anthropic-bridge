@@ -29,7 +29,7 @@ type platformRuntime struct {
 type Server struct {
 	cfg        *config.Config
 	byProxyKey map[string]*platformRuntime
-	rewriter func([]byte, proxy.RewriteOptions) (*proxy.RewriteResult, error)
+	rewriter   func([]byte, proxy.RewriteOptions) (*proxy.RewriteResult, error)
 	// searcher 谷歌搜索执行器,响应侧拦截 web_search tool_use 时用。
 	// 为 nil 时不做响应过滤(web_search 走原样透传)。
 	searcher    *proxy.WebSearchExecutorAdapter
