@@ -5,6 +5,7 @@
 # 网关自身
 server:
   host: 0.0.0.0
+  # 注意:Docker 部署时,docker-compose.yml 的端口映射需与此处 port 一致
   port: 8080
 
 # 谷歌搜索(WebSearch 功能;proxy 留空则禁用响应侧 web_search 拦截)

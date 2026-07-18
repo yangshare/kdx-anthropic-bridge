@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -245,6 +246,39 @@ profiles:
 	}
 	if cfg.GoogleSearch.Limit != 5 {
 		t.Errorf("google_search.limit default = %d, want 5", cfg.GoogleSearch.Limit)
+	}
+}
+
+func TestLoad_serverHostDefault(t *testing.T) {
+	yaml := `server: {port: 8080}
+platforms:
+  - {name: a, proxy_key: k1, base_url: http://x, api_key: ak, profile: p}
+profiles:
+  p: {}
+`
+	cfg, err := Load(writeTempYAML(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Errorf("server.host default = %q, want 0.0.0.0", cfg.Server.Host)
+	}
+}
+
+func TestLoad_durationIntegerFriendlyError(t *testing.T) {
+	yaml := `server: {port: 8080}
+platforms:
+  - {name: a, proxy_key: k1, base_url: http://x, api_key: ak, profile: p}
+profiles:
+  p: {retry_interval: 5}
+`
+	_, err := Load(writeTempYAML(t, yaml))
+	if err == nil {
+		t.Fatal("integer duration should error")
+	}
+	want := "duration must be a string with unit"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want substring %q", err.Error(), want)
 	}
 }
 

@@ -121,7 +121,7 @@ func (s *Server) handleAll(w http.ResponseWriter, r *http.Request) {
 	resp, err := p.client.Forward(r.Method, r.URL.RequestURI(), body, r.Header)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "upstream forward failed")
-		log.Printf("upstream error after %s: %v", time.Since(tStart), err)
+		log.Printf("upstream error platform=%s after %s: %v", p.cfg.Name, time.Since(tStart), err)
 		return
 	}
 	defer resp.Body.Close()
@@ -141,7 +141,10 @@ func (s *Server) handleAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 其他:流式透传
-	n, _ := io.Copy(w, resp.Body)
+	n, err := io.Copy(w, resp.Body)
+	if err != nil {
+		log.Printf("stream copy error platform=%s path=%s: %v", p.cfg.Name, r.URL.Path, err)
+	}
 	log.Printf("done platform=%s path=%s status=%d header_wait=%s stream=%s total=%s bytes=%d",
 		p.cfg.Name, r.URL.Path, resp.StatusCode, headerWait, time.Since(tStart)-headerWait,
 		time.Since(tStart), n)

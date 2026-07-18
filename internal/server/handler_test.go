@@ -264,8 +264,8 @@ func TestHandler_multiPlatformRouting(t *testing.T) {
 	}
 }
 
-// TestHandler_webSearchInterceptOnlyWhenProfileEnabled kdx 开了 web_search 改写,
-// 请求带 web_search 工具时响应走拦截路径(此处 searcher 为 nil,验证不 panic 即可)。
+// TestHandler_webSearchInterceptOnlyWhenProfileEnabled official 关了 web_search 改写,
+// 请求带 web_search 工具时响应不拦截(此处 searcher 为 nil,验证不 panic 即可)。
 func TestHandler_webSearchInterceptOnlyWhenProfileEnabled(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

@@ -59,6 +59,13 @@ type Duration time.Duration
 
 // UnmarshalYAML 把 YAML 字符串解析为 time.Duration。
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	// 从 .env 迁移的用户可能写纯数字(无单位),给出友好提示
+	if value.Tag == "!!int" {
+		var n int
+		if err := value.Decode(&n); err == nil {
+			return fmt.Errorf("duration must be a string with unit (e.g. %ds), got integer %d", n, n)
+		}
+	}
 	var s string
 	if err := value.Decode(&s); err != nil {
 		return err
@@ -136,6 +143,9 @@ func (c *Config) validate() error {
 
 // normalize 归一化缺省字段为安全默认值。
 func (c *Config) normalize() {
+	if c.Server.Host == "" {
+		c.Server.Host = "0.0.0.0"
+	}
 	if c.GoogleSearch.Timeout <= 0 {
 		c.GoogleSearch.Timeout = 15
 	}
