@@ -1,0 +1,25 @@
+# 二进制/构建产物
+/bridge
+/bin/
+
+# Git(只浪费上下文体积)
+.git/
+
+# 抓包数据、Python 缓存
+captures/
+__pycache__/
+*.pyc
+
+# IDE / 工具元数据
+.idea/
+.vscode/
+.claude/
+.codegraph/
+.superpowers/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 注意:config.yaml 不忽略——构建期 COPY 进镜像
+# (内含真实 key,请勿将镜像推送到公开仓库)

@@ -1,8 +1,7 @@
 services:
   kdx-anthropic-bridge:
     build: .
-    volumes:
-      - ./config.yaml:/config.yaml:ro
+    # config.yaml 已 COPY 进镜像,不再挂载(避开 Windows 相对路径反斜杠解析问题)
     command: ["--config", "/config.yaml"]
     ports:
       - "8080:8080"
