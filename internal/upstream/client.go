@@ -1,7 +1,7 @@
 // Package upstream 实现对科大 Anthropic 端点的流式转发。
 //
 // 职责:把改写后的请求体原样 POST 到上游,流式回传响应。
-// 遇上游 502/503/429 时按固定间隔重试(可配置次数),其他状态码立即返回。
+// 遇上游 502/503/429/529 时按固定间隔重试(可配置次数),其他状态码立即返回。
 // 不做任何业务改写,成功响应逐字节透传。
 //
 // 并发抢窗口:科大上游间歇性 503/排队,单次请求可能等十几秒才出首字节。
@@ -25,6 +25,7 @@ var retryableStatus = map[int]bool{
 	http.StatusBadGateway:         true, // 502
 	http.StatusServiceUnavailable: true, // 503
 	http.StatusTooManyRequests:    true, // 429
+	529:                           true, // Site is overloaded(非标准,智谱 GLM 过载码)
 }
 
 // Client 科大上游客户端。
@@ -35,7 +36,7 @@ type Client struct {
 	APIKey string
 	// HTTP 底层 HTTP 客户端(可注入便于测试)
 	HTTP *http.Client
-	// MaxRetries 上游 502/503/429 时的最大重试次数(不含首次)。0 = 不重试。
+	// MaxRetries 上游 502/503/429/529 时的最大重试次数(不含首次)。0 = 不重试。
 	MaxRetries int
 	// RetryInterval 重试间隔。0 = 不等待。
 	RetryInterval time.Duration
@@ -63,7 +64,7 @@ type raceResult struct {
 // path 是 Claude Code 请求的原始路径(含 query),如 /v1/messages?beta=true
 // headers 是需要透传的请求头(鉴权头会被替换为上游 key)。
 //
-// 重试策略:上游返回 502/503/429 且重试次数未达 MaxRetries 时,关闭响应体,
+// 重试策略:上游返回 502/503/429/529 且重试次数未达 MaxRetries 时,关闭响应体,
 // 等待 RetryInterval 后重发。达到上限后返回最后一次响应(含错误状态码),
 // 由调用方透传给下游。网络错误同样重试(上游不可达视为瞬时故障)。
 //
@@ -134,7 +135,7 @@ func (c *Client) Forward(method, path string, body []byte, headers http.Header) 
 // 返回:
 //   - resp: 若有任一路拿到非重试状态码(成功/4xx),返回第一个这样的响应(其余已取消+关闭)。
 //     resp == nil 表示没有一路拿到可用响应(全可重试码或全网络错)。
-//   - allRetry: 全 parallel 路都返回可重试状态码(502/503/429)。resp 必为 nil。
+//   - allRetry: 全 parallel 路都返回可重试状态码(502/503/429/529)。resp 必为 nil。
 //   - netErr: 全 parallel 路都网络错误时的最后一个错误(用于日志/外层重试)。
 //
 // 语义:racing 到一个"可用响应"(非重试码)立即胜出;全路重试码或全路网络错

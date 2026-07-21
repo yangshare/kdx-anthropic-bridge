@@ -128,6 +128,34 @@ func TestForward_429Retries(t *testing.T) {
 	}
 }
 
+// TestForward_529Retries 529(智谱 GLM 过载码,非标准)也重试。
+func TestForward_529Retries(t *testing.T) {
+	var calls int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.WriteHeader(529) // Site is overloaded
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(up.Close)
+
+	c := newClient(t, up.URL, 3, time.Millisecond)
+	resp, err := c.Forward(http.MethodPost, "/v1/messages", []byte(`{}`), nil)
+	if err != nil {
+		t.Fatalf("Forward err: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Errorf("calls = %d, want 2", calls)
+	}
+}
+
 // TestForward_bodyReplayed 重试时上游每次都收到完整请求体。
 func TestForward_bodyReplayed(t *testing.T) {
 	var received [][]byte
