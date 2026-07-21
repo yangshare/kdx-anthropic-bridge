@@ -39,7 +39,7 @@ profiles:
   keding:
     rewrite_thinking: true       # thinking.type=adaptive -> enabled(科大需要)
     rewrite_web_search: true     # web_search_20250305 -> function tool(科大需要)
-    max_retries: 10              # 502/503/429 重试次数(不含首次)
+    max_retries: 10              # 502/503/429/529 重试次数(不含首次)
     retry_interval: 5s           # 重试间隔,>0 才 sleep
     header_timeout: 30s          # 等上游响应头超时;流式开始后不再计时
     parallel: 1                  # 单次 attempt 并发抢窗口路数,<=1 串行
