@@ -28,6 +28,12 @@ platforms:
     api_key: sk-ant-...                  # 官方上游真实 key
     profile: official
 
+  - name: zhipu
+    proxy_key: token-zhipu-zzzzzz
+    base_url: https://open.bigmodel.cn/api/anthropic   # 智谱 Anthropic 兼容端点
+    api_key: your-zhipu-key             # 智谱上游真实 key(xxx.yyy 格式)
+    profile: zhipu
+
 # 改写模板:封装该平台的全部适配规则 + 重试/并发参数
 profiles:
   keding:
@@ -42,5 +48,15 @@ profiles:
     rewrite_thinking: false      # 官方原生支持,不改写
     rewrite_web_search: false
     max_retries: 0               # 不重试
+    header_timeout: 60s
+    parallel: 1
+
+  zhipu:
+    # 智谱 GLM(4.7/5.x)官方仅支持 thinking.type=enabled,不认 Claude Code 的 adaptive,
+    # 故 rewrite_thinking 必须开启(adaptive->enabled,与官方文档一致)。
+    rewrite_thinking: true
+    rewrite_web_search: true
+    max_retries: 5
+    retry_interval: 3s
     header_timeout: 60s
     parallel: 1
