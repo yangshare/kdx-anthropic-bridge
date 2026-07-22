@@ -6,3 +6,10 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+    # 日志轮转:默认 json-file 驱动无上限会堆满磁盘,容器重启也不清日志,
+    # 这里限制单文件 10MB、保留 3 个(上限 ~30MB),自动滚动。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
